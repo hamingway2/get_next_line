@@ -1,3 +1,15 @@
-123456
-abcdefgh
-AJ
+Key Features:
+
+Allocation and deallocation are done by the compiler.
+
+It uses a data structures stack for static memory allocation.
+
+Variables get allocated permanently.
+
+No reusability.
+
+Execution is faster than dynamic memory allocation.
+
+Memory is allocated before runtime.
+
+It is less efficient.

@@ -205,22 +205,22 @@ char	*get_next_line(int fd)
 	char		*buffer;
 	int			BUFFER_SIZE = 5; //goes in header
 	size_t		i;
+	ssize_t		read_count;
 
 	buffer = ft_calloc((BUFFER_SIZE + 1), sizeof(char));
 	i = 0;
-	while (read(fd, buffer, BUFFER_SIZE) >= 0)
+	while ((read_count = read(fd, buffer, BUFFER_SIZE)) > 0)
 	{
-		if ((ft_strchr(buffer, '\n') != NULL) || (ft_strchr(buffer, '\0') != NULL))
+		if ((ft_strchr(buffer, '\n') != NULL) || (ft_strchr(buffer, '\0') != NULL)) //or EOF check if it can be used
 		{
 			while (buffer[i])
 			{
-				if (buffer[i] == '\n')
+				if (buffer[i++] == '\n')
 					break;
-				i++;
 			}
 			line = ft_substr(buffer, 0, i + 1); //allocation happens in ft_substr incl addition of null terminator
 			hold = ft_substr(buffer, i, ft_strlen(buffer) - i); //allocation happens in ft_substr
-			return (line);
+			break;
 		}
 		else
 		{
@@ -230,6 +230,7 @@ char	*get_next_line(int fd)
 			free(buffer);
 		}
 	}
+	free(buffer);
 	return (line);
 }
 
@@ -242,9 +243,9 @@ int	main()
 	int	i = 0;
 	
 	fd = open("text.txt", O_RDONLY);
-	while(i < 10)
+	while(i < 100)
 	{
-		printf("%s", get_next_line(fd));
+		printf("[%i] %s", i, get_next_line(fd));
 		i++;
 	}
 	close(fd);
