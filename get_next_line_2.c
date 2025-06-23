@@ -1,15 +1,3 @@
-/* ************************************************************************** */
-/*                                                                            */
-/*                                                        :::      ::::::::   */
-/*   get_next_line.c                                    :+:      :+:    :+:   */
-/*                                                    +:+ +:+         +:+     */
-/*   By: azielnic <azielnic@student.42.fr>          +#+  +:+       +#+        */
-/*                                                +#+#+#+#+#+   +#+           */
-/*   Created: 2025/06/04 18:10:18 by azielnic          #+#    #+#             */
-/*   Updated: 2025/06/23 22:53:12 by azielnic         ###   ########.fr       */
-/*                                                                            */
-/* ************************************************************************** */
-
 /*Repeated calls (e.g., using a loop) to your get_next_line() function should let
 you read the text file pointed to by the file descriptor, one line at a time.
 • Your function should return the line that was read.
@@ -38,38 +26,6 @@ size_t	ft_strlen(const char *str)
 	while (str[i] != '\0')
 		i++;
 	return (i);
-}
-
-/*Allocates memory (using malloc(3)) and returns a substring from the string 
-’s’. The substring starts at index ’start’ and has a maximum length of ’len’.
-
-s: The original string from which to create the substring.
-start: The starting index of the substring within ’s’.
-len: The maximum length of the substring.
-
-Return value: The substring. NULL if the allocation fails.*/
-
-char	*ft_substr(char const *s, unsigned int start, size_t len)
-{
-	char	*s_sub;
-	size_t	s_len;
-	size_t	i;
-
-	s_len = ft_strlen(s);
-	if (s_len < start)
-		return (ft_strdup(""));
-	if (len > s_len - start)
-		len = s_len - start;
-	s_sub = (char *) ft_calloc(len + 1, sizeof(char));
-	if (s_sub == NULL)
-		return (NULL);
-	i = 0;
-	while (i < len)
-	{
-		s_sub[i] = s[i + start];
-		i++;
-	}
-	return (s_sub);
 }
 
 /*The  bzero() function  erases  the data in the n bytes of the memory starting 
@@ -114,33 +70,6 @@ void	*ft_calloc(size_t nmemb, size_t size)
 	return (ptr);
 }
 
-char	*ft_strjoin(char const *s1, char const *s2)
-{
-	char	*joined_s;
-	size_t	s_len;
-	size_t	i;
-	size_t	j;
-
-	if (!s1 || !s2)
-		return (NULL);
-	i = 0;
-	s_len = ft_strlen(s1) + ft_strlen(s2);
-	joined_s = (char *) ft_calloc(s_len + 1, sizeof(char));
-	if (!joined_s)
-		return (NULL);
-	while (s_len && s1[i])
-	{
-		joined_s[i] = s1[i];
-		i++;
-	}
-	j = 0;
-	while (s_len && s2[j])
-	{
-		joined_s[i + j] = s2[j];
-		j++;
-	}
-	return (joined_s);
-}
 /*The memcpy() function copies n bytes from memory area src to memory area 
 dest. The memory areas must not overlap. The memcpy() function returns a 
 pointer to dest.*/
@@ -204,36 +133,106 @@ char	*ft_substr(char const *s, unsigned int start, size_t len)
 	}
 	return (s_sub);
 }
+/*The strchr() function returns a pointer to the first occurrence of the 
+ character c in the string s. Here "character" means "byte"; these functions 
+ do not work with wide or multibyte characters.
+
+ strchr = string character
+
+ The strchr() and strrchr() functions return a pointer to the matched character 
+ or NULL if the character is not found. The terminating null byte is 
+ considered part of the string, so that if c is specified as '\0', these 
+ functions return a pointer to the terminator.*/
+
+//casting the int into an unsigned char is necessary to compare the char in
+//string with the charater in int disregarding higher bits.
+char	*ft_strchr(const char *str, int c)
+{
+	const unsigned char	*p_str;
+	unsigned char		ch;
+	size_t				i;
+
+	p_str = (unsigned const char *)str;
+	ch = (unsigned char) c;
+	i = 0;
+	while (p_str[i] && p_str[i] != ch)
+		i++;
+	if (p_str[i] == ch)
+		return ((char *)&p_str[i]);
+	return (NULL);
+}
+
+/*Allocates memory (using malloc(3)) and returns a new string, which is the 
+result of concatenating ’s1’ and ’s2’.
+
+s1: The prefix string.
+s2: The suffix string.
+
+Return value: The new string. NULL if the allocation fails.*/
+
+char	*ft_strjoin(char const *s1, char const *s2)
+{
+	char	*joined_s;
+	size_t	s_len;
+	size_t	i;
+	size_t	j;
+
+	if (!s1 || !s2)
+		return (NULL);
+	i = 0;
+	s_len = ft_strlen(s1) + ft_strlen(s2);
+	joined_s = (char *) ft_calloc(s_len + 1, sizeof(char));
+	if (!joined_s)
+		return (NULL);
+	while (s_len && s1[i])
+	{
+		joined_s[i] = s1[i];
+		i++;
+	}
+	j = 0;
+	while (s_len && s2[j])
+	{
+		joined_s[i + j] = s2[j];
+		j++;
+	}
+	return (joined_s);
+}
 
 char	*get_next_line(int fd)
 {
-	static char *buffer; //will contain buffer_size or a multiple of it incl \n
-	char	*pre_stash;
-	char	*line; //is supposed to be the cleaned up line ending with \n taken from the stash; has to be manually be null-terminated
-	int		buffer_size = 5; //user input
-	int		buffer_count;
-	int		i;
+	static char *hold;
+	char		*line;
+	char		*buffer;
+	int			BUFFER_SIZE = 5; //goes in header
+	size_t		i;
 
-	buffer_count = 0;
+	buffer = ft_calloc((BUFFER_SIZE + 1), sizeof(char));
 	i = 0;
-	if (!fd || !buffer_size || buffer_size <= 0)
-		return (NULL);
-	pre_stash = malloc(sizeof(buffer_size + 1));
-	buffer_count = read(fd, pre_stash, buffer_size);
-	if (buffer_count < 0 || !buffer_count)
-		return (-1);
-	pre_stash[buffer_count] = '\0';
-	//possible issue because I save stash in stash;
-	buffer = ft_strjoin(buffer, pre_stash);
-	free(pre_stash);
-	while(buffer[i])
+	while (read(fd, buffer, BUFFER_SIZE) >= 0)
 	{
-		if (buffer[i] == '\n')
-			return (&line);
-		i++;
+		if ((ft_strchr(buffer, '\n') != NULL) || (ft_strchr(buffer, '\0') != NULL))
+		{
+			while (buffer[i])
+			{
+				if (buffer[i] == '\n')
+					break;
+				i++;
+			}
+			line = ft_substr(buffer, 0, i + 1); //allocation happens in ft_substr incl addition of null terminator
+			hold = ft_substr(buffer, i, ft_strlen(buffer) - i); //allocation happens in ft_substr
+			return (line);
+		}
+		else
+		{
+			line = ft_strdup(hold);
+			hold = ft_strjoin(line, ft_substr(buffer, 0, BUFFER_SIZE));
+			free(line);
+			free(buffer);
+		}
 	}
 	return (line);
 }
+
 #include <stdio.h>
 
 int	main()
@@ -243,13 +242,11 @@ int	main()
 	int	i = 0;
 	
 	fd = open("text.txt", O_RDONLY);
-	while(i < 3)
+	while(i < 10)
 	{
 		printf("%s", get_next_line(fd));
 		i++;
 	}
 	close(fd);
-
 	return (0);
 }
-
