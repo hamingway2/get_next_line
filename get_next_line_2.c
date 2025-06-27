@@ -1,12 +1,25 @@
-/*Repeated calls (e.g., using a loop) to your get_next_line() function should let
-you read the text file pointed to by the file descriptor, one line at a time.
+/* ************************************************************************** */
+/*                                                                            */
+/*                                                        :::      ::::::::   */
+/*   get_next_line_2.c                                  :+:      :+:    :+:   */
+/*                                                    +:+ +:+         +:+     */
+/*   By: azielnic <azielnic@student.42.fr>          +#+  +:+       +#+        */
+/*                                                +#+#+#+#+#+   +#+           */
+/*   Created: 2025/06/26 18:25:26 by azielnic          #+#    #+#             */
+/*   Updated: 2025/06/27 16:14:36 by azielnic         ###   ########.fr       */
+/*                                                                            */
+/* ************************************************************************** */
+
+/*Repeated calls (e.g., using a loop) to your get_next_line() function should 
+let you read the text file pointed to by the file descriptor, one line at a 
+time.
 • Your function should return the line that was read.
 If there is nothing left to read or if an error occurs, it should return NULL.
-• Make sure that your function works as expected both when reading a file and when
-reading from the standard input.
-• Please note that the returned line should include the terminating \n character,
-except when the end of the file is reached and the file does not end with a \n
-character.
+• Make sure that your function works as expected both when reading a file and 
+when reading from the standard input.
+• Please note that the returned line should include the terminating \n 
+character, except when the end of the file is reached and the file does not end 
+with a \n character.
 • Your header file get_next_line.h must at least contain the prototype of the
 get_next_line() function.
 • Add all the helper functions you need in the get_next_line_utils.c file.*/
@@ -14,6 +27,7 @@ get_next_line() function.
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 /*The  strlen() function calculates the length of the string pointed to by str, 
  excluding the terminating null byte ('\0').*/
@@ -200,36 +214,42 @@ char	*ft_strjoin(char const *s1, char const *s2)
 
 char	*get_next_line(int fd)
 {
+	//check out struct could be useful for this
+	
 	static char *hold;
 	char		*line;
 	char		*buffer;
-	int			BUFFER_SIZE = 5; //goes in header
+	int			BUFFER_SIZE = 6; //goes in header
 	size_t		i;
 	ssize_t		read_count;
 
 	buffer = ft_calloc((BUFFER_SIZE + 1), sizeof(char));
+	hold = NULL;
 	i = 0;
-	while ((read_count = read(fd, buffer, BUFFER_SIZE)) > 0)
-	{
-		if ((ft_strchr(buffer, '\n') != NULL) || (ft_strchr(buffer, '\0') != NULL)) //or EOF check if it can be used
+	while ((read_count = read(fd, buffer, BUFFER_SIZE)) >= 0)
+	{	
+		if ((ft_strchr(buffer, '\n') != NULL))
 		{
 			while (buffer[i])
 			{
 				if (buffer[i++] == '\n')
 					break;
 			}
-			line = ft_substr(buffer, 0, i + 1); //allocation happens in ft_substr incl addition of null terminator
-			hold = ft_substr(buffer, i, ft_strlen(buffer) - i); //allocation happens in ft_substr
+			line = ft_substr(buffer, 0, i + 1);
+			hold = ft_substr(buffer, i, ft_strlen(buffer) - i);
 			break;
 		}
-		else
+		else if ((ft_strchr(buffer, '\n') != NULL))
 		{
+			printf("else has been entered\n");
 			line = ft_strdup(hold);
 			hold = ft_strjoin(line, ft_substr(buffer, 0, BUFFER_SIZE));
 			free(line);
 			free(buffer);
 		}
 	}
+	if (read_count < 0)
+			return (free(buffer), NULL);
 	free(buffer);
 	return (line);
 }
@@ -243,9 +263,9 @@ int	main()
 	int	i = 0;
 	
 	fd = open("text.txt", O_RDONLY);
-	while(i < 100)
+	while(i < 500)
 	{
-		printf("[%i] %s", i, get_next_line(fd));
+		printf("|%s",  get_next_line(fd));
 		i++;
 	}
 	close(fd);
