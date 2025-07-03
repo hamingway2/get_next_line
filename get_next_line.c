@@ -68,14 +68,37 @@ char	*ft_strdup(const char *s)
 
 char	*get_next_line(int fd)
 {
-	static char *stash; //will contain buffer_size or a multiple of it incl \n
+		/*read into a static buffer up to buffersize long
+	then check for /n if /n available return up to new line
+	*/
+	static char	buffer[BUFFER_SIZE];
+	char	*output;
+	char	*temp;
+	int		count;
+		
+	if (BUFFER_SIZE < 0 || !BUFFER_SIZE)
+		return (-1);
+	count = read(fd, buffer, BUFFER_SIZE);
+	if (count <= 0 || !count)
+		return (-1);
+	output = malloc(sizeof(BUFFER_SIZE + 1));
+	if (!output)
+		return (-1);
+	output[BUFFER_SIZE] = '/0';
+	output = ft_strjoin(output, temp);
+	if (count < BUFFER_SIZE)
+		return (&output);
+		
+		
+	
+	
+	/*static char buffer[BUFFER_SIZE]; //will contain buffer_size or a multiple of it incl \n
 	char *pre_stash;
 	char	*line; //is supposed to be the cleaned up line ending with \n taken from the stash; has to be manually be null-terminated
 	int	buffer_size = 5; //user input
 	int	buffer_count;
 	int	i;
 
-	stash = NULL;
 	pre_stash = NULL;
 	line = NULL;
 	buffer_count = 0;
@@ -95,7 +118,7 @@ char	*get_next_line(int fd)
 		if (stash[i] == '\n')
 			return (&line);
 		i++;
-	}
+	}*/
 	return (&line);
 }
 #include <stdio.h>
@@ -105,11 +128,12 @@ int	main()
 	//char *next_line = NULL;
 	int	fd;
 	int	i = 0;
-	
-	fd = open("text.txt", O_RDONLY);
-	while(i < 3)
+	char *next_line;
+
+	fd = open("/etc/passwd", O_RDONLY);
+	while (next_line = get_next_line(fd))
 	{
-		printf("%s", get_next_line(fd));
+		printf("%s", next_line);
 		i++;
 	}
 	close(fd);
