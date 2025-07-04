@@ -10,7 +10,7 @@
 
 /* An individual inked list item */
 typedef struct GNLChunk {
-	size_t          start;                  // starting position in the string. Used only in leftovers
+	ssize_t         mark;                   // usable length (either offset of the next \n or len at EOF)
 	struct GNLChunk *next;                  // pointer to the next item
 	char            buf[BUFFER_SIZE];       // the buffer itself
 } GNLChunk;
@@ -19,27 +19,34 @@ typedef struct GNLChunk {
 
 /*
  * State of the get_next_line(). Meant to be used as a static.
+ * 
  * https://stackoverflow.com/questions/13251083/the-initialization-of-static-variables-in-c
+ * So all statics are initialised as nullchars and null pointers
+ *
  * Could be defined inline in the function
  * but I am not sure that the Norminette would like it
  *
  */
 typedef struct GNLTracker {
-	int      count;              	// Size of the FD lookup table. Doubles as the initialization sentinel
-	GNLChunk **latest;              // last read chunk, actually an array of pointers indexed by FD number.
+	int      max;              	    // Number of the highest FD we're tracking
+	GNLChunk **latest;              // an array of pointers to the first element of the FD-owned linked list,
+									// indexed by FD number.
+									//
 	                                // A given member is NULL if there were no leftovers (or on its first iteration)
 									// gets allocated and copied dynamically as the highest FD number goes up
-									// which wastes a bit of memory.
+									// which wastes quite a bit of memory.
+									//
 	                                // This project is too small for a binary search effort
 									// The memory to each leftover buffer is inevitably leaked if they don't
 									// call us for a given file descriptor until EOF. Also
 									// the memory for the array pointers is always leaked
-	char     buf[BUFFER_SIZE];      // the data buffer that is read
 } GNLTracker;
 
 
-// Reimplementation of realloc, as realloc() is not in the list of allowed functions
+// Reimplementation of a crude form of realloc, as realloc() is not in the list of allowed functions
 // we do NOT use this for the buffers themselves, as it is guaranteed to copy memory.
+// Also, without allocation information, we copy memory from after the end of the buffer
+// at *ptr. Expect junk
 void *gnl_realloc(void *ptr, size_t size) {
 void *ret;
 unsigned long i;
@@ -52,8 +59,8 @@ unsigned long i;
 	ret = malloc(size);
 
 	if ((NULL != ret) && (NULL != ptr)) { // our own malloc() might have failed...
-		i = -1; // save on the adder in the loop. Unsigned, so it will wrap around
-		while (++i < size)
+		i = size; // we go backwards to account for overlapping areas
+		while (--i >= size)
 			((char *)ret)[i] = ((char *)ptr)[i];
 		free(ptr);
 	}
@@ -79,69 +86,96 @@ size_t ret;
 }
 
 /*
-	Recursively assemble a whole linked list starting at head,
-    into dest.
+	Unwinds a linked list into dest, backwards in order to be able to
+	bring back the last element at each iteration, and eventually free
+	that one too if there is no data left
+
+	Frees the list elements backwards from the first one containing 
+
 	Stops at the first \n (included) or the end of the last buffer
 
+	If there is remaining data after \n in the last
 
-	NOTE: frees the very pointer that is passed to it
-
-	If free_only is set, only frees the list and returns 0
+	NOTE: frees the very pointer in the linked list that is passed to it
 
 	Returns:
 		Total number of bytes written, including the final \n
 */
-size_t assemble_and_free(char *dest, GNLChunk *head, char free_only) {
-size_t ret;
+// size_t ll_actions(char *dest, GNLChunk *head) {
+// size_t ret;
 
-	ret = 0;
-	if (head->next != NULL)
-		ret += assemble_and_free(dest + BUFFER_SIZE, head->next, free_only);
-	if (! free_only)
-		ret += gnl_copy(dest, head->buf + head->start, BUFFER_SIZE - head->start);
-	free(head);
+// 	ret = 0;
+// 	if (head->next != NULL) {
+// 		// look ahead into the list if this is not the end.
+// 		// Copy
+// 		ret += assemble_and_free(dest + BUFFER_SIZE, head->next, free_only);
+// 	}
+// 	if (NULL != dest)
+// 		ret += (head->buf += gnl_copy(
+// 			dest, head->buf + head->read, BUFFER_SIZE - head->read
+// 		));
+// 	
+// 	free(head);
 
+// 	return ret;
+
+// }
+
+// expands the catalog of file descriptor-indexed linked lists to accomodate for the highest FD number
+// Returns the new pointer to the list of chunks, or NULL in case of failure
+GNLChunk **expand_fd_catalog(GNLTracker *track, int fd) {
+GNLChunk **ret;
+int i;
+
+	// static initialization sentinels
+	ret = track->latest;
+	track->max = ret ? track->max : -1;
+	while (fd > track->max) { // extend the tracking table and initialise it with null pointers
+		if (! (ret = (GNLChunk**)malloc(sizeof(GNLChunk*) * (track->max + 4096))))
+			return ret;
+		track->max += 4096 + (i = 0);
+		do { // these MUST be null pointers, so we double down on initialising memory
+			ret[i] = track->latest && (i < fd) ? track->latest[i] : NULL;
+			i++;
+		} while (i < track->max);
+		free(track->latest);
+		track->latest = ret;
+	}
 	return ret;
 }
 
-int main(int argc, char *argv[]) {
-	
-	(void) argc; (void) argv;
-	return 0;
-}
-
-
 char *get_next_line(int fd) {
-static GNLTracker tracker;
-int r_b;
-GNLChunk *next;
+static GNLTracker track;
+ssize_t r_b; // bytes read
+ssize_t lf_dist; // distance to the next LF in the linked list
+GNLChunk *read_tgt; // read target
 
-	while (fd >= tracker.count) { // extend the tracking table and initialise it with null pointers
-		r_b = tracker.count + 4096; // usurp this variable
-		tracker.latest = (GNLChunk**)gnl_realloc(tracker.latest, sizeof(GNLChunk*) * (tracker.count + 4096));
-		while (tracker.count < r_b)
-			tracker.latest[tracker.count] = (GNLChunk*) NULL;
-	}
-
-	// to avoid copying memory, we always read directly into the leftovers,
-	// so the linked list ends there
-	// Its pointer might already be at the end of it, but who cares?
-	if (NULL == tracker.latest[fd])
-		
-
-	while ((r_b = read(fd, tracker.latest[fd].buf, BUFFER_SIZE)) > 0) {
-		
-		if ((GNLTracker.latest[fd] = (GNLChunk *) malloc(sizeof(GNLChunk)))) {
-			break;
+	expand_fd_catalog(&track, fd);
+	lf_dist = 0;
+	while ((read_tgt = (GNLChunk *) malloc(sizeof(GNLChunk)))) {
+		if ((r_b = read(fd, read_tgt->buf, BUFFER_SIZE)) <= 0) {
+			free(read_tgt);
+			break; // error or EOF. We'll handle that later
 		}
-		head = (NULL == head) ? NULL : head;
-		
+		// to avoid copying memory, we always read directly into the chunk.
+		// If the list has no head, that is what read_tgt will be
+		if ((track.latest[fd] = track.latest[fd] ? track.latest[fd] : read_tgt) != read_tgt)
+			track.latest[fd]->next = read_tgt; // initiate or append to the list
+		while (read_tgt->mark++ < r_b) {
+			lf_dist++;
+			if (read_tgt->buf[read_tgt->mark] == '\n') {
+				printf("DIST_B: R=%lu M=%lu D=%lu S=`%s`\n", r_b, read_tgt->mark, lf_dist, read_tgt->buf);
+				break;
+			}
+		}
 	}
 
-	(first != NULL) ? free_chunks(first) : NULL;
+	if (r_b >= 0)
+		;
 	
+	//free_chunks(track.latest[fd]);
+	return NULL;
 
-	return full_line;
 
 }
 
@@ -150,16 +184,19 @@ int fd;
 char *next_line;
 	
 	(void) argc; (void) argv;
+
+	
 	
 	if (0 > (fd = open("/etc/passwd", O_RDONLY))) {
 		// open failure
 		return 3;
 	}
-	
 
-	while (NULL != (next_line = get_next_line(fd))) {
-		
+
+	while ((next_line = get_next_line(fd))) {
+		printf("L: %p\n", next_line);
 	}
+	return 0;
 	
 	close(fd);
 	//read(1, (char *) NULL, 1024);
