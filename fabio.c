@@ -43,48 +43,6 @@ typedef struct GNLTracker {
 } GNLTracker;
 
 
-// Reimplementation of a crude form of realloc, as realloc() is not in the list of allowed functions
-// we do NOT use this for the buffers themselves, as it is guaranteed to copy memory.
-// Also, without allocation information, we copy memory from after the end of the buffer
-// at *ptr. Expect junk
-void *gnl_realloc(void *ptr, size_t size) {
-void *ret;
-unsigned long i;
-
-	if (! size) {
-		free(ptr);
-		return NULL;
-	}
-
-	ret = malloc(size);
-
-	if ((NULL != ret) && (NULL != ptr)) { // our own malloc() might have failed...
-		i = size; // we go backwards to account for overlapping areas
-		while (--i >= size)
-			((char *)ret)[i] = ((char *)ptr)[i];
-		free(ptr);
-	}
-	
-	return ret;
-}
-
-/* Copies n bytes of src into dest, but also stops at the first \n (included)
- * The number of copied bytes is returned
- * Stops at BUFFER_SIZE anyway
- */
-size_t gnl_copy(char *dest, char *src, size_t n) {
-size_t ret;
-
-	ret = 0;
-	while (ret < n) {
-		dest[ret] = src[ret];
-		ret++;
-		if (src[ret] == '\n')
-			break;
-	}
-	return ret;
-}
-
 /*
 	Unwinds a linked list into dest, backwards in order to be able to
 	bring back the last element at each iteration, and eventually free
