@@ -5,51 +5,14 @@
 /*                                                    +:+ +:+         +:+     */
 /*   By: azielnic <azielnic@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
-/*   Created: 2025/06/04 18:10:18 by azielnic          #+#    #+#             */
-/*   Updated: 2025/06/23 22:53:12 by azielnic         ###   ########.fr       */
+/*   Created: 2025/06/27 15:53:43 by azielnic          #+#    #+#             */
+/*   Updated: 2025/07/05 18:27:04 by azielnic         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
-/*Repeated calls (e.g., using a loop) to your get_next_line() function should let
-you read the text file pointed to by the file descriptor, one line at a time.
-• Your function should return the line that was read.
-If there is nothing left to read or if an error occurs, it should return NULL.
-• Make sure that your function works as expected both when reading a file and when
-reading from the standard input.
-• Please note that the returned line should include the terminating \n character,
-except when the end of the file is reached and the file does not end with a \n
-character.
-• Your header file get_next_line.h must at least contain the prototype of the
-get_next_line() function.
-• Add all the helper functions you need in the get_next_line_utils.c file.*/
+#include "get_next_line.h"
 
-#include <fcntl.h>
-#include <unistd.h>
-#include <stdlib.h>
-
-/*The  strlen() function calculates the length of the string pointed to by str, 
- excluding the terminating null byte ('\0').*/
-
-size_t	ft_strlen(const char *str)
-{
-	size_t	i;
-
-	i = 0;
-	while (str[i] != '\0')
-		i++;
-	return (i);
-}
-
-/*Allocates memory (using malloc(3)) and returns a substring from the string 
-’s’. The substring starts at index ’start’ and has a maximum length of ’len’.
-
-s: The original string from which to create the substring.
-start: The starting index of the substring within ’s’.
-len: The maximum length of the substring.
-
-Return value: The substring. NULL if the allocation fails.*/
-
-char	*ft_substr(char const *s, unsigned int start, size_t len)
+static char	*ft_substr(char const *s, unsigned int start, size_t len)
 {
 	char	*s_sub;
 	size_t	s_len;
@@ -72,184 +35,70 @@ char	*ft_substr(char const *s, unsigned int start, size_t len)
 	return (s_sub);
 }
 
-/*The  bzero() function  erases  the data in the n bytes of the memory starting 
- at the location pointed to by s, by writing zeros (bytes containing '\0') to 
- that area.*/
-
-void	ft_bzero(void *s, size_t n)
+// Function that splits at /n and returns up until incl that 
+// new line character. Updates the content of hold.
+static char	*extract_line(char **hold)
 {
-	unsigned char	*p_str;
-	size_t			i;
-
-	p_str = (unsigned char *) s;
-	i = 0;
-	while (i < n)
-	{
-		p_str[i] = (0);
-		i++;
-	}
-}
-
-/*The malloc() function allocates memory and leaves the memory uninitialized, 
-whereas the calloc() function allocates memory and initializes all bits to zero.
-calloc = contiguous allocation*/
-
-//nmemb = number of members
-//malloc(1) is returned in case of size 0 or nmemb 0 as the return value needs 
-//to be unique and NULL is not unique. See yellow box in subject.
-void	*ft_calloc(size_t nmemb, size_t size)
-{
-	void	*ptr;
-	size_t	total;
-
-	total = nmemb * size;
-	if (nmemb == 0 || size == 0)
-		return (malloc(1));
-	if (total / size != nmemb)
-		return (NULL);
-	ptr = (void *)malloc(nmemb * size);
-	if (!ptr)
-		return (NULL);
-	ft_bzero(ptr, (nmemb * size));
-	return (ptr);
-}
-
-char	*ft_strjoin(char const *s1, char const *s2)
-{
-	char	*joined_s;
-	size_t	s_len;
-	size_t	i;
-	size_t	j;
-
-	if (!s1 || !s2)
-		return (NULL);
-	i = 0;
-	s_len = ft_strlen(s1) + ft_strlen(s2);
-	joined_s = (char *) ft_calloc(s_len + 1, sizeof(char));
-	if (!joined_s)
-		return (NULL);
-	while (s_len && s1[i])
-	{
-		joined_s[i] = s1[i];
-		i++;
-	}
-	j = 0;
-	while (s_len && s2[j])
-	{
-		joined_s[i + j] = s2[j];
-		j++;
-	}
-	return (joined_s);
-}
-/*The memcpy() function copies n bytes from memory area src to memory area 
-dest. The memory areas must not overlap. The memcpy() function returns a 
-pointer to dest.*/
-
-void	*ft_memcpy(void *dest, const void *src, size_t n)
-{
-	unsigned char	*p_dest;
-	unsigned char	*p_src;
-	size_t			i;
-
-	p_dest = (unsigned char *) dest;
-	p_src = (unsigned char *) src;
-	i = 0;
-	while (i < n)
-	{
-		p_dest[i] = p_src[i];
-		i++;
-	}
-	return (dest);
-}
-
-char	*ft_strdup(const char *s)
-{
-	char	*s_dup;
-
-	s_dup = ft_calloc(ft_strlen(s) + 1, sizeof(char));
-	if (!s_dup)
-		return (NULL);
-	s_dup = ft_memcpy(s_dup, s, (ft_strlen(s) + 1));
-	return (s_dup);
-}
-
-/*Allocates memory (using malloc(3)) and returns a substring from the string 
-’s’. The substring starts at index ’start’ and has a maximum length of ’len’.
-
-s: The original string from which to create the substring.
-start: The starting index of the substring within ’s’.
-len: The maximum length of the substring.
-
-Return value: The substring. NULL if the allocation fails.*/
-
-char	*ft_substr(char const *s, unsigned int start, size_t len)
-{
-	char	*s_sub;
-	size_t	s_len;
+	char	*line;
+	char	*temp;
 	size_t	i;
 
-	s_len = ft_strlen(s);
-	if (s_len < start)
-		return (ft_strdup(""));
-	if (len > s_len - start)
-		len = s_len - start;
-	s_sub = (char *) ft_calloc(len + 1, sizeof(char));
-	if (s_sub == NULL)
+	if (!hold || !*hold || **hold == '\0')
 		return (NULL);
 	i = 0;
-	while (i < len)
-	{
-		s_sub[i] = s[i + start];
+	while ((*hold)[i] != '\n' && (*hold)[i] != '\0')
 		i++;
-	}
-	return (s_sub);
+	if ((*hold)[i] == '\n')
+		i++;
+	line = ft_substr(*hold, 0, i);
+	if (!line)
+		return (NULL);
+	temp = ft_substr(*hold, i, ft_strlen(*hold) - i);
+	free(*hold);
+	*hold = temp;
+	return (line);
 }
 
 char	*get_next_line(int fd)
 {
-	static char *buffer; //will contain buffer_size or a multiple of it incl \n
-	char	*pre_stash;
-	char	*line; //is supposed to be the cleaned up line ending with \n taken from the stash; has to be manually be null-terminated
-	int		buffer_size = 5; //user input
-	int		buffer_count;
-	int		i;
+	static char	*hold = NULL;
+	char		*buffer;
+	char		*temp;
+	ssize_t		read_count;
 
-	buffer_count = 0;
-	i = 0;
-	if (!fd || !buffer_size || buffer_size <= 0)
+	if (fd < 0 || BUFFER_SIZE <= 0)
 		return (NULL);
-	pre_stash = malloc(sizeof(buffer_size + 1));
-	buffer_count = read(fd, pre_stash, buffer_size);
-	if (buffer_count < 0 || !buffer_count)
-		return (-1);
-	pre_stash[buffer_count] = '\0';
-	//possible issue because I save stash in stash;
-	buffer = ft_strjoin(buffer, pre_stash);
-	free(pre_stash);
-	while(buffer[i])
+	buffer = ft_calloc((BUFFER_SIZE + 1), (sizeof(char)));
+	if (!buffer)
+		return (NULL);
+	if (!hold)
+		hold = ft_calloc(1, 1);
+	read_count = 0;
+	while (!ft_strchr(hold, '\n') && ((read_count = read(fd, buffer, BUFFER_SIZE)) > 0))
 	{
-		if (buffer[i] == '\n')
-			return (&line);
-		i++;
+		buffer[read_count] = '\0';
+		temp = ft_strjoin(hold, buffer);
+		free(hold);
+		hold = temp;
 	}
-	return (line);
+	free(buffer);
+	if (read_count == -1 || !hold || !*hold)
+		return (free(hold), hold = NULL, NULL);
+	return (extract_line(&hold));
 }
-#include <stdio.h>
-
-int	main()
+/*
+int	main(void)
 {
-	//char *next_line = NULL;
-	int	fd;
-	int	i = 0;
-	
-	fd = open("text.txt", O_RDONLY);
-	while(i < 3)
+	char	*line;
+	int		fd = open("big_line_no_nl", O_RDONLY);
+
+	if (fd < 0)
+		return (perror("open"), 1);
+	while ((line = get_next_line(fd)))
 	{
-		printf("%s", get_next_line(fd));
-		i++;
+		printf("%s|", line);
+		free(line);
 	}
 	close(fd);
-
 	return (0);
-}
-
+}*/
