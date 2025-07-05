@@ -10,13 +10,35 @@
 
 
 int pdb(const char *fmt, ...) {
+int ret;
+char *buf;
+
+	
+	if (!(buf = malloc(4096))) {
+		write(2, "DEBUG MALLOC FAILED\n", 20);
+		exit(3);
+	}
+		
     va_list args;
     va_start(args, fmt);
-
-    dprintf(2, "[DEBUG] ");
-    return vdprintf(2, fmt, args);
-
+	ret = vsnprintf(buf, 4096, fmt, args);
     va_end(args);
+
+	if (ret >= 0) {
+		write(2, buf, ret);
+	} else {
+		write(2, "DEBUG PRINT FAILED\n", 19);
+		free(buf);
+		exit(3);
+	}
+
+
+	free(buf);
+	return ret;
+
+
+    //dprintf(2, "[DEBUG] ");
+    //return vdprintf(2, fmt, args);
 }
 
 /* An individual inked list item. Each item never contains bytes from multiple lines */
@@ -154,18 +176,25 @@ ssize_t ret;
 GNLChunk *o;
 
 	ret = 0;
-	while (h->head) {
+	while (h->sep) {
 		// We copy bytes in the following cases (assuming dest is passed):
 		// if sep is set; if this is the EOF (self linked item)
 		if (dest && (h->sep || (h->head->next == h->head))) {
-			// stop at the known separator, or at a line feed, or at the end of the chunk
+			pdb("PACKER: P:%lu, SEP: %lu S:%s\n",
+				h->pos - h->head->buf,
+				h->sep ? h->sep - h->head->buf : 1000,
+				dest- 3
+			);
+			// stop at the known separator (if it is in this chunk),
+			// or at a line feed, or at the end of the chunk
 			while (h->pos != h->sep && (h->pos < h->head->buf + h->head->len)) {
 				*(dest++) = *(h->pos++);
 				ret++;
-				pdb("PACKER: P:%lu S:%s\n", h->pos - h->head->buf, dest- 3);
 			}
 			h->sep = find_lf(h->head->buf, h->head->buf + h->head->len - h->pos); // more separators?
+			
 		}
+
 		// eventually free and swap if chunk is fully consumed, or if requested
 		if (!dest || (h->sep >= h->pos)) {
 			o = h->head;
@@ -177,32 +206,19 @@ GNLChunk *o;
 	return ret;
 	
 
-	/*
-	p = head->buf;
-	while (p != lf && p - head->buf < BUFFER_SIZE) { // start is considered only for the first element
-		*(dest + (p - head->buf)) = *p;
-		p++;
-	}
-	if (head->next) { // is there a follow up?
-		ret = pack_and_free(dest ? dest + (p - head->buf) : NULL, head->next, lf);
-		free(head);
-	} else {
-		ret = head; // deliver last member
-	}
-	return ret;
-	*/
 }
 
-ssize_t render(char **dest, GNLHolder *h) {
-size_t n;
+char *render(GNLHolder *h) {
+char *ret;
+ssize_t n;
 
-	if (! (dest = malloc(h->len * sizeof(char)))) { // we always null-terminate
+	if (! (ret = malloc(h->len * sizeof(char)))) { // we always null-terminate
 		pdb("malloc failed for output string(%d bytes)\n", h->len * sizeof(char));
 		return NULL;
 	}
-	pdb("Packing reported %d bytes\n", n);
-	return pack_and_free(&dest, h);
-
+	n = pack_and_free(ret, h);
+	pdb("Packing reported %d bytes (%s)\n", n, ret);
+	return ret;
 }
 
 
@@ -210,19 +226,17 @@ char *get_next_line(int fd) {
 static GNLTracker t;
 ssize_t r_b; // bytes read
 GNLChunk *r_tgt; // read target
-char *ret;
+//char *ret;
 
 
 	if (! pad_table(&t, fd))
 		return NULL;
 
-	if (r_b = render(ret, t.holders[fd])) {
-		return ret;
-	}
 
-	while ((r_tgt = gnlalloc(t.holders[fd]))) {
+	while (!t.holders[fd]->sep) {
+		if (!(r_tgt = gnlalloc(t.holders[fd])))
+			return NULL; // state is corrupt anyway
 		r_b = read(fd, r_tgt->buf, BUFFER_SIZE); // short read (we don't care about errors)
-		pdb("R: %lu\n", r_b);
 		if (r_b < BUFFER_SIZE) {
 			pdb("SHORT READ\n");
 			r_tgt->next = r_tgt; // EOF member
@@ -248,12 +262,8 @@ char *ret;
 		if ((t.holders[fd]->sep = find_lf(r_tgt->buf, r_b))) // look for first separator
 			break;
 	}
-	if (!r_tgt)
-		return NULL; // state is corrupt anyway
 
-	if (r_b = render(ret, t.holders[fd])) {
-		return ret;
-	}
+	return render(t.holders[fd]);
 
 
 }
@@ -263,8 +273,8 @@ int fd;
 char *next_line;
 	
 	(void) argc; (void) argv;
-
-	setvbuf(stdout, NULL, _IONBF, 0);
+	
+	//setvbuf(stdout, NULL, _IONBF, 0);
 	
 	
 	if (0 > (fd = open("/etc/passwd", O_RDONLY))) {
@@ -272,10 +282,11 @@ char *next_line;
 		return 3;
 	}
 
-
+	int lc = 0;
 	while ((next_line = get_next_line(fd))) {
 		pdb("Next output line: |%s|\n", next_line);
-		return 0;
+		if (lc++ > 10)
+			break;
 	}
 	return 0;
 	
