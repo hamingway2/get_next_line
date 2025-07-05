@@ -10,11 +10,23 @@
 
 /* An individual inked list item. Each item never contains bytes from multiple lines */
 typedef struct GNLChunk {
-	ssize_t         len;                    // usable length (either offset of next \n, EOF or BUFFER_SIZE)
 	struct GNLChunk *next;                  // pointer to the next item
 	char            buf[BUFFER_SIZE];       // the buffer itself
 } GNLChunk;
-//typedef struct GNLChunk GNLChunk;
+
+
+/*
+ * Holds the line currently being processed and some metadata about it
+ *
+ * Uses integers for references as they seem more convenient for fragmented memory
+ *
+ * head:  pointer to the first element of the linked list
+ * lf:    pointer to the most recently discovered \n in the list
+ */
+typedef struct GNLHolder {
+	GNLChunk		*head;
+	char			lf;
+} GNLHolder;
 
 
 /*
@@ -28,45 +40,32 @@ typedef struct GNLChunk {
  *
  */
 typedef struct GNLTracker {
-	int      max;              	    // Number of the highest FD we're tracking
-	GNLChunk **latest;              // an array of pointers to the first element of the FD-owned linked list,
-									// indexed by FD number.
-									//
-	                                // A given member is NULL if there were no leftovers (or on its first iteration)
-									// gets allocated and copied dynamically as the highest FD number goes up
-									// which wastes quite a bit of memory.
-									//
-	                                // This project is too small for a binary search effort
-									// The memory to each leftover buffer is inevitably leaked if they don't
-									// call us for a given file descriptor until EOF. Also
-									// the memory for the array pointers is always leaked
+	int      	max;              	// Number of the highest FD we're tracking
+	GNLHolder 	**holders;          // Array of pointers to lines holders, indexed by FD number. Can be NULL
 } GNLTracker;
 
 
-// 	return ret;
-
-// }
 
 // expands the catalog of file descriptor-indexed linked lists to accomodate for the highest FD number
 // Returns the new pointer to the list of chunks, or NULL in case of failure
-GNLChunk **expand_fd_catalog(GNLTracker *track, int fd) {
-GNLChunk **ret;
+GNLHolder **expand_table(GNLTracker *track, int fd) {
+GNLHolder **ret;
 int i;
 	if (fd < 0)
 		return NULL;
 	// static initialization sentinels
-	ret = track->latest;
+	ret = track->holders;
 	track->max = ret ? track->max : -1;
 	while (fd > track->max) { // extend the tracking table and initialise it with null pointers
-		if (! (ret = (GNLChunk**)malloc(sizeof(GNLChunk*) * (track->max + 4096))))
+		if (! (ret = (GNLHolder**)malloc(sizeof(GNLHolder*) * (track->max + 4096))))
 			return ret;
 		track->max += 4096 + (i = 0);
-		do { // these MUST be null pointers, so we double down on initialising memory
-			ret[i] = track->latest && (i < fd) ? track->latest[i] : NULL;
+		do { // we pre allocate all the new holders. We'll never free them
+			ret[i] = track->holders && (i < fd) ? track->holders[i] : malloc(sizeof(GNLHolder));
 			i++;
 		} while (i < track->max);
-		free(track->latest);
-		track->latest = ret;
+		free(track->holders);
+		track->holders = ret;
 	}
 	return ret;
 }
@@ -76,10 +75,17 @@ int i;
  * Returns the new pointer or NULL in case of failure.
  * If the head is NULL, the added item is just created
  */
-GNLChunk *chunk_add(GNLChunk *head) {
+GNLChunk *append_chunk(GNLChunk *head) {
 GNLChunk *ret;
+long unsigned int i;
 	if (! (ret = (GNLChunk *) malloc(sizeof(GNLChunk)))) {
 		return NULL;
+	}
+	// we don't trust malloc
+	i = 0;
+	while (i < sizeof(GNLChunk)) {
+		((char *)ret)[i] = 0;
+		i++;
 	}
 	if (head)
 		head->next = ret;
@@ -87,70 +93,73 @@ GNLChunk *ret;
 }
 
 /*
-	If dest is NULL, simply releases the whole list.
 
-	If dest is not NULL, unwinds and copies buffers in the linked list,
-	for n bytes, into dest.
-	Every element that is copied is freed.
-	If there are more chunks after the element at n distance,
-	the first that is left is returned as the new head.
+	Traverses the linked list.
 
+	If dest is not NULL, unwinds and concatenates buffers from the items,
+	until it runs into lf's address (or it exhausted the buffers if that
+	is NULL).
+
+	Elements in the list are freed() even when dest is NULL,
+
+	EXCEPT THE LAST/ONLY ONE: a pointer to it is returned instead
 
 	Returns:
 		a pointer to the new head, or NULL in case of failure.
 		always returns NULL if dest is passed as NULL
 */
-GNLChunk *pack_and_free(char *dest, GNLChunk *head, ssize_t n) {
+GNLChunk *pack_and_free(char *dest, GNLChunk *head, const char *lf) {
 GNLChunk *ret;
-ssize_t i;
+char *p;
 
-	i = 0;
-	while (dest && i < head->len) {
-		dest[i] = head->buf[i];
-		i++;
+	p = head->buf;
+	while (p != lf && p - head->buf < BUFFER_SIZE) { // start is considered only for the first element
+		*(dest + (p - head->buf)) = *p;
+		p++;
 	}
 	if (head->next) { // is there a follow up?
-		ret = (i < n || !dest) ? pack_and_free(dest ? &dest[i] : NULL, head->next, n - i) : head->next;
-	}
-	if (i >= n || !dest) // member fully consumed, or they want to free anyway
+		ret = pack_and_free(dest ? dest + (p - head->buf) : NULL, head->next, lf);
 		free(head);
+	} else {
+		ret = head; // deliver last member
+	}
 	return ret;
 }
 
-char *get_next_line(int fd) {
-static GNLTracker track;
-ssize_t r_b; // bytes read
-ssize_t lf_dist; // distance to the next LF in the linked list
-GNLChunk *read_tgt; // read target
 
-	if (! expand_fd_catalog(&track, fd))
+char *get_next_line(int fd) {
+static GNLTracker t;
+ssize_t r_b; // bytes read
+GNLChunk *r_tgt; // read target
+char *p;
+
+
+	if (! expand_table(&t, fd))
 		return NULL;
 
-	lf_dist = 0;
-	while ((read_tgt = chunk_add(NULL))) {
-		if ((r_b = read(fd, read_tgt->buf, BUFFER_SIZE)) <= 0) {
-			free(read_tgt); // useless allocation
+	while ((r_tgt = append_chunk(NULL))) {
+		if ((r_b = read(fd, r_tgt->buf, BUFFER_SIZE)) <= 0) {
+			free(r_tgt); // useless allocation
 			break;
 		}
 		// to avoid copying memory twice, we always read directly into the chunk.
-		// If the list has no head, that is what read_tgt will be
-		if ((track.latest[fd] = track.latest[fd] ? track.latest[fd] : read_tgt) != read_tgt)
-			track.latest[fd]->next = read_tgt; // initiate or append to the list
-		while (read_tgt->len++ < r_b) {
-			if (read_tgt->buf[read_tgt->len] == '\n') {
-				if (read_tgt->buf[read_tgt->len] >= r_b)
-					read_tgt = chunk_add(read_tgt); // encountered newline, but there are more bytes
-				printf("DIST_B: R=%lu M=%lu D=%lu S=`%s`\n", r_b, read_tgt->len, lf_dist, read_tgt->buf);
-				break;
-			}
-			lf_dist++;
+		// If the list has no head, that is what r_tgt will be
+		if (! t.holders[fd]->head) { // initiate or append to the list
+			t.holders[fd]->head = r_tgt;
+		} else {
+			t.holders[fd]->head->next = r_tgt;
 		}
+		p = r_tgt->buf;
+		while (p - r_tgt->buf < r_b && '\n' != *p)
+			p++;
+		printf("R=%lu E=%lu S=`%s`\n",
+			r_b, p - r_tgt->buf, r_tgt->buf
+		);
+		break;
 	}
 
-	if (r_b >= 0) {
-	}
 	
-	//free_chunks(track.latest[fd]);
+	//free_chunks(track.line[fd]);
 	return NULL;
 
 
