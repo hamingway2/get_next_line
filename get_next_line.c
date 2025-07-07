@@ -6,7 +6,7 @@
 /*   By: azielnic <azielnic@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/06/27 15:53:43 by azielnic          #+#    #+#             */
-/*   Updated: 2025/07/06 00:34:20 by azielnic         ###   ########.fr       */
+/*   Updated: 2025/07/07 18:03:02 by azielnic         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -35,16 +35,45 @@ static char	*ft_substr(char const *s, unsigned int start, size_t len)
 	return (s_sub);
 }
 
+static ssize_t	read_into_hold(char **hold, int fd)
+{
+	char		*buffer;
+	char		*temp;
+	ssize_t		read_count;
+
+	buffer = ft_calloc((BUFFER_SIZE + 1), (sizeof(char)));
+	if (!buffer)
+		return (-1);
+	read_count = 0;
+	while (!ft_strchr(*hold, '\n'))
+	{
+		read_count = read(fd, buffer, BUFFER_SIZE);
+		if (read_count <= 0)
+			break ;
+		buffer[read_count] = '\0';
+		temp = ft_strjoin(*hold, buffer);
+		free(*hold);
+		*hold = temp;
+		if (!hold || !*hold)
+			return (-1);
+	}
+	free(buffer);
+	return (read_count);
+}
+
 // Function that splits at /n and returns up until incl that 
 // new line character. Updates the content of hold.
+// 
 static char	*extract_line(char **hold) //explain above better why double poiter is used
 {
 	char	*line;
 	char	*temp;
 	size_t	i;
 
-	if (!hold || !*hold || **hold == '\0')
+	if (!hold || !*hold)
 		return (NULL);
+	if (**hold == '\0')
+		return (free(*hold), *hold = NULL, NULL);
 	i = 0;
 	while ((*hold)[i] != '\n' && (*hold)[i] != '\0')
 		i++;
@@ -54,6 +83,8 @@ static char	*extract_line(char **hold) //explain above better why double poiter 
 	if (!line)
 		return (NULL);
 	temp = ft_substr(*hold, i, ft_strlen(*hold) - i);
+	if (!temp)
+		return (NULL);
 	free(*hold);
 	*hold = temp;
 	return (line);
@@ -62,46 +93,14 @@ static char	*extract_line(char **hold) //explain above better why double poiter 
 char	*get_next_line(int fd)
 {
 	static char	*hold = NULL;
-	char		*buffer;
-	char		*temp;
-	ssize_t		read_count;
 
 	if (fd < 0 || BUFFER_SIZE <= 0)
-		return (NULL);
-	buffer = ft_calloc((BUFFER_SIZE + 1), (sizeof(char)));
-	if (!buffer)
-		return (NULL);
+		return (free(hold), NULL);
 	if (!hold)
 		hold = ft_calloc(1, 1);
-	read_count = 0;
-	while (!ft_strchr(hold, '\n'))
-	{
-		read_count = read(fd, buffer, BUFFER_SIZE);
-		if (read_count == -1)
-			return (free(hold), hold = NULL, NULL);
-		if (read_count == 0)
-			break;
-		buffer[read_count] = '\0';
-		temp = ft_strjoin(hold, buffer);
-		free(hold);
-		hold = temp;
-	}
-	free(buffer);
+	if (!hold)
+		return (NULL);
+	if (read_into_hold(&hold, fd) == -1)
+		return (NULL);
 	return (extract_line(&hold));
-}
-
-int	main(void)
-{
-	char	*line;
-	int		fd = open("text.txt", O_RDONLY);
-
-	if (fd < 0)
-		return (perror("open"), 1);
-	while ((line = get_next_line(fd)))
-	{
-		printf("%s|", line);
-		free(line);
-	}
-	close(fd);
-	return (0);
 }

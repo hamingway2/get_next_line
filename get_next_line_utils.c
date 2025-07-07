@@ -6,7 +6,7 @@
 /*   By: azielnic <azielnic@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/06/13 16:58:37 by azielnic          #+#    #+#             */
-/*   Updated: 2025/07/04 18:00:01 by azielnic         ###   ########.fr       */
+/*   Updated: 2025/07/07 16:39:43 by azielnic         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -32,7 +32,7 @@ void	*ft_calloc(size_t nmemb, size_t size)
 	total = nmemb * size;
 	if (nmemb == 0 || size == 0)
 	{
-		ptr = malloc(1);
+		ptr = malloc(0);
 		if (ptr)
 			*((unsigned char *)ptr) = 0;
 		return (ptr);
