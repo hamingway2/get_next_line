@@ -6,7 +6,7 @@
 /*   By: azielnic <azielnic@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/06/27 15:53:43 by azielnic          #+#    #+#             */
-/*   Updated: 2025/07/07 18:03:02 by azielnic         ###   ########.fr       */
+/*   Updated: 2025/07/08 20:50:13 by azielnic         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -35,6 +35,7 @@ static char	*ft_substr(char const *s, unsigned int start, size_t len)
 	return (s_sub);
 }
 
+// Reads from fd into *hold until newline or end of file (EOF).
 static ssize_t	read_into_hold(char **hold, int fd)
 {
 	char		*buffer;
@@ -61,10 +62,21 @@ static ssize_t	read_into_hold(char **hold, int fd)
 	return (read_count);
 }
 
-// Function that splits at /n and returns up until incl that 
-// new line character. Updates the content of hold.
-// 
-static char	*extract_line(char **hold) //explain above better why double poiter is used
+// Function that splits at /n and returns up until incl that new line 
+// character. Updates the content of hold.
+
+// Why pass a double pointer (&hold) to this function?
+// C lets you only return one value. The second would have to be passed by
+// reference, which is the address of a pointer (&hold and char **).
+
+// extract_line already returns the next line. But it also has to shift 
+// 'hold' to point to the leftover text. 
+// If only a single pointer would be passed the function would receive a copy
+// of the pointer and the reassignment would only affect the copy and the
+// callers 'hold' (in this case from get_next_line) would not move. 
+// By sending the pointers address extract_line can change the original 
+// value.
+static char	*extract_line(char **hold)
 {
 	char	*line;
 	char	*temp;
@@ -95,7 +107,7 @@ char	*get_next_line(int fd)
 	static char	*hold = NULL;
 
 	if (fd < 0 || BUFFER_SIZE <= 0)
-		return (free(hold), NULL);
+		return (NULL);
 	if (!hold)
 		hold = ft_calloc(1, 1);
 	if (!hold)
