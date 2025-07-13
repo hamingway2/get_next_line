@@ -5,48 +5,18 @@
 #include <stdarg.h>
 
 #ifndef BUFFER_SIZE
-	# define BUFFER_SIZE 42
+	# define BUFFER_SIZE 10
 #endif
 
 
-int pdb(const char *fmt, ...) {
-int ret;
-char *buf;
-
-	
-	if (!(buf = malloc(4096))) {
-		write(2, "DEBUG MALLOC FAILED\n", 20);
-		exit(3);
-	}
-		
-    va_list args;
-    va_start(args, fmt);
-	ret = vsnprintf(buf, 4096, fmt, args);
-    va_end(args);
-
-	if (ret >= 0) {
-		write(2, buf, ret);
-	} else {
-		write(2, "DEBUG PRINT FAILED\n", 19);
-		free(buf);
-		exit(3);
-	}
-
-
-	free(buf);
-	return ret;
-
-
-    //dprintf(2, "[DEBUG] ");
-    //return vdprintf(2, fmt, args);
-}
 
 /* An individual inked list item. Each item never contains bytes from multiple lines */
 typedef struct GNLChunk {
-	ssize_t			len;					// length read into the chunk
-	struct GNLChunk *next;                  // pointer to the next item
-	char            buf[BUFFER_SIZE];       // the buffer itself
+	ssize_t		len;					 // length read into the chunk
+	struct 		GNLChunk *next;          // pointer to the next item
+	char        buf[BUFFER_SIZE];        // the buffer itself
 } GNLChunk;
+
 
 
 /*
@@ -54,24 +24,26 @@ typedef struct GNLChunk {
  *
  * Uses integers for references as they seem more convenient for fragmented memory
  *
- * head:     pointer to the first element of the linked list. Can be NULL
- * head:     pointer to the last element of the linked list. Can be NULL
- * len:      total size, in bytes
- * pos:      read position in the head buffer
- * sep:      pointer to the most recently identified \n in the head buffer. Can be NULL
+ * head:   	pointer to the first element of the linked list. Can be NULL
+ * tail:   	pointer to the last element of the linked list. Can be NULL
+ * len:    	total size, in bytes, of the EFFECTIVE string, final \n included if present
+ * pos:   	pointer to currrent read position in the head buffer
+ * nl:   	pointer to byte after the earliest \n after pos.
+ *			Might be several chunks ahead.
+ *			NULL if there isn't any
  */
 typedef struct GNLHolder {
 	GNLChunk		*head;
 	GNLChunk		*tail;
 	ssize_t			len;
 	char			*pos;
-	char			*sep;
+	char			*nl;
 } GNLHolder;
 
 
 /*
  * State of the get_next_line(). Meant to be used as a static.
- * 
+ *
  * https://stackoverflow.com/questions/13251083/the-initialization-of-static-variables-in-c
  * So all statics are initialised as nullchars and null pointers
  *
@@ -98,16 +70,18 @@ ssize_t i;
 	track->max = ret ? track->max : 0;
 	while (!fd || fd > track->max) { // account for stdin
 		if (! (ret = (GNLHolder**)malloc(sizeof(GNLHolder*) * (track->max + 4096)))) {
-			pdb("malloc() failed for holders table\n");
+			printf("malloc() failed for holders table\n");
 			return NULL;
 		}
 		track->max += (i = track->max) + 4096;
 		while (i < track->max) { // we pre allocate all the new holders. We'll never free them
 			ret[i] = track->holders && (i < fd) ? track->holders[i] : malloc(sizeof(GNLHolder));
 			if (! ret[i]) {
-				pdb("malloc() failed for holders with FD #%lu/%lu\n", i, track->max);
+				printf("malloc() failed for holders with FD #%lu/%lu\n", i, track->max);
 				return NULL;
 			}
+			ret[i]->len = 0;
+			ret[i]->nl = NULL;
 			i++;
 		}
 		free(track->holders);
@@ -117,7 +91,7 @@ ssize_t i;
 }
 
 /*
- * Appends a linked list chunk to the one in head (if it's not NULL)
+ * Appends a linked list chunk to the holder
  * Returns the new pointer or NULL in case of failure.
  * If the head is NULL, the added item is just created
  */
@@ -125,13 +99,16 @@ GNLChunk *gnlalloc(GNLHolder *h) {
 GNLChunk *ret;
 
 	if (! (ret = (GNLChunk *) malloc(sizeof(GNLChunk)))) {
-		pdb("malloc() failed for chunk\n");
+		printf("malloc() failed for chunk\n");
 		return NULL;
 	}
 	if (h) {
 		if (!h->head) {// initialise
+			printf("NEW HEAD: %p\n", (void *) ret);
 			h->tail = (h->head = ret);
-		} else {
+			h->pos = h->head->buf; // initialise read position
+		} else { // append
+			printf("APPENDED CHUNK: %p\n", (void *) ret);
 			h->tail->next = ret;
 			h->tail = ret;
 		}
@@ -139,8 +116,9 @@ GNLChunk *ret;
 	return ret; // initialise
 }
 
-/* looks for the first line feed within len bytes. Returns NULL if not found */
-char *find_lf(char *str, ssize_t len) {
+/* looks for the first line feed within len bytes.
+ */
+char *gnl_strchr(char *str, int len) {
 ssize_t i;
 	i = 0;
 	while (i < len) {
@@ -156,111 +134,155 @@ ssize_t i;
 	Traverses the linked list in the holder.
 
 	If dest is not NULL, unwinds and concatenates buffers from the items,
-	starting at from and stopping at the next \n or the end of data.
+	starting at from and stopping at the next \n or the end of data (not included).
 
 	Elements in the list that are fully consumed are freed.
 
-	head is changed to the first element of the first element
-	with unconsumed data (NULL if there isn't any)
+	head is changed to the first element with unconsumed data (NULL if there isn't any)
 
 	from is changed to the address of the next \n that is
 	encounered in the buffers (undefined behaviour if there was none)
 
-	If dest is NULL, the copy is skipped and all elements are freed
+	If dest is NULL, the copy is simlpy skipped and all elements are freed
 
 	Returns:
 		the number of bytes consumed
 */
-ssize_t pack_and_free(char *dest, GNLHolder *h) {
+int pack_and_free(char *dest, GNLHolder *h) {
 ssize_t ret;
 GNLChunk *o;
 
 	ret = 0;
-	while (h->sep) {
-		// We copy bytes in the following cases (assuming dest is passed):
-		// if sep is set; if this is the EOF (self linked item)
-		if (dest && (h->sep || (h->head->next == h->head))) {
-			pdb("PACKER: P:%lu, SEP: %lu S:%s\n",
-				h->pos - h->head->buf,
-				h->sep ? h->sep - h->head->buf : 1000,
-				dest- 3
-			);
-			// stop at the known separator (if it is in this chunk),
-			// or at a line feed, or at the end of the chunk
-			while (h->pos != h->sep && (h->pos < h->head->buf + h->head->len)) {
+	while (h->nl || (h->head && h->head->next == h->head)) {
+		/*printf("HEAD IS %p\n", (void *) h->head);
+		printf("PACKER BEFORE:  L: %lu, NL: %i\n",
+			h->len, h->nl != NULL
+		);*/
+		if (dest) {
+			// stop at the end of chunk buffer, or right after the separator
+			while (h->pos < h->head->buf + h->head->len) {
+				printf("COPYING %lu/%lu: %p(`%c`) (`%p`)\n",
+					h->pos - h->head->buf, h->head->len, h->pos, *h->pos, h->nl
+				);
 				*(dest++) = *(h->pos++);
 				ret++;
-			}
-			h->sep = find_lf(h->head->buf, h->head->buf + h->head->len - h->pos); // more separators?
-			
-		}
+				if (h->pos == h->nl + 1) {
+					printf("FOUND LF AT CHUNK OFFSET %lu\n", h->nl - h->head->buf);
+					h->nl = NULL; // found it
+					break;
+				}
+				if ((*(h->pos - 1) & 0x80) || *(h->pos - 1) == 0)
+					return -1;
 
+			}
+
+		}
+		/*printf("PACKER AFTER:   L: %lu, NL: %i, (%lu bytes)\n",
+			h->len, h->nl != NULL, h->pos - h->head->buf
+		);*/
 		// eventually free and swap if chunk is fully consumed, or if requested
-		if (!dest || (h->sep >= h->pos)) {
+		if (!dest || (h->pos == h->head->buf + h->head->len)) {
+			printf("NO DEST OR CHUNK END REACHED FOR (%p)\n", (void *) h);
 			o = h->head;
-			if (h->head->next != h->head)
+			if (o->next == h->head) {
+				printf("DISCARDING HEAD: %p\n", (void *) h->head);
+				h->nl = NULL;
+				h->pos = NULL; // reset state
+				h->head = NULL;
+			} else {
 				h->head = h->head->next;
+				h->pos = h->head->buf;
+				printf("HEAD SHIFTED %p->%p\n",
+					(void *) o, (void *) h->head
+				);
+			}
+			h->len -= o->len;
+			printf("FREEING OLD HEAD: %p (len left: %lu)\n", (void *) o, h->len);
 			free(o);
 		}
 	}
+	if (dest) {
+		if (h->head) {
+			if (h->pos < h->head->buf + h->head->len) {
+				h->nl = gnl_strchr(h->pos, (h->head->buf + h->head->len) - (h->pos)); // more separators?
+				if (h->nl) {
+					printf("Found \\n at chunk %p's offset %lu\n",
+						(void *) h->head, h->nl - h->head->buf
+					);
+				} else {
+					printf("Found chunk %p does not contain more \\n.\n",
+						(void *) h->head
+					);
+				}
+			}
+		} else {
+			printf("THERE IS NO REMAINING HEAD\n");
+		}
+	}
+	printf("RETURNING: %lu(L: %p, NL: %lu)\n",
+		ret, (void *) h->head, h->nl ? h->nl - h->head->buf : -1
+	);
 	return ret;
-	
-
 }
+
 
 char *render(GNLHolder *h) {
 char *ret;
 ssize_t n;
 
-	if (! (ret = malloc(h->len * sizeof(char)))) { // we always null-terminate
-		pdb("malloc failed for output string(%d bytes)\n", h->len * sizeof(char));
+	if (!h->len)
+		return NULL;
+	// add a byte for the final nullchar
+	if (! (ret = malloc((h->len + 1) * sizeof(char)))) { // we always null-terminate
+		printf("malloc failed for output string(%lu bytes)\n", h->len * sizeof(char));
 		return NULL;
 	}
+	printf("Holder's length before packing: %lu\n", h->len);
 	n = pack_and_free(ret, h);
-	pdb("Packing reported %d bytes (%s)\n", n, ret);
+	ret[n] = '\0';
+	printf("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX: %s\n", ret);
+	printf("Packed %lu bytes. %lu unscanned bytes remaining in the holder\n",n, h->len);
+	if (n < 0)
+		return NULL;
 	return ret;
 }
 
 
 char *get_next_line(int fd) {
 static GNLTracker t;
-ssize_t r_b; // bytes read
 GNLChunk *r_tgt; // read target
-//char *ret;
 
 
 	if (! pad_table(&t, fd))
 		return NULL;
 
+	while (! t.holders[fd]->nl) { // we get more data only if we have no NL yet
 
-	while (!t.holders[fd]->sep) {
-		if (!(r_tgt = gnlalloc(t.holders[fd])))
+		r_tgt = gnlalloc(t.holders[fd]);
+		if (! r_tgt)
 			return NULL; // state is corrupt anyway
-		r_b = read(fd, r_tgt->buf, BUFFER_SIZE); // short read (we don't care about errors)
-		if (r_b < BUFFER_SIZE) {
-			pdb("SHORT READ\n");
-			r_tgt->next = r_tgt; // EOF member
-			if (r_b <= 0) { // bypass creating the [last] empty member
-				pdb("NULL READ\n");
+		r_tgt->len = read(fd, r_tgt->buf, BUFFER_SIZE); // short read (we don't care about errors)
+		printf("READ BUFFER: (%lu bytes)\n", r_tgt->len);
+		if (r_tgt->len < BUFFER_SIZE || r_tgt->len == -1) { // it's unsigned, account for wraps
+			if (r_tgt->len == 0) { // bypass creating the [last] empty member
+				printf("NULL READ. FREEING CHUNK\n");
 				free(r_tgt);
 				if (t.holders[fd]->tail) // link EOF member to itself
 					t.holders[fd]->tail->next = t.holders[fd]->tail;
 				break;
 			}
+			r_tgt->next = r_tgt; // EOF member
 		}
-		// to avoid copying memory twice, we always read directly into the chunk.
-		// If the list has no head, that is what r_tgt will be
-		if (! t.holders[fd]->head) { // initiate or append to the list
-			t.holders[fd]->head = r_tgt;
-		} else {
-			t.holders[fd]->head->next = r_tgt;
-		}
-		if (!t.holders[fd]->pos) // alignment and accounting
-			t.holders[fd]->pos = r_tgt->buf;
-		t.holders[fd]->len += (r_tgt->len = r_b);
+		t.holders[fd]->len += r_tgt->len;
+		printf("New length of holder is %lu\n", t.holders[fd]->len);
 
-		if ((t.holders[fd]->sep = find_lf(r_tgt->buf, r_b))) // look for first separator
+		t.holders[fd]->nl = gnl_strchr(r_tgt->buf, '\n');
+		if (t.holders[fd]->nl) {
+			printf("FOUND NEWLINE AT GLOBAL OFFSET: %lu\n",
+				t.holders[fd]->len - BUFFER_SIZE + t.holders[fd]->nl - r_tgt->buf
+			);
 			break;
+		}
 	}
 
 	return render(t.holders[fd]);
@@ -271,25 +293,21 @@ GNLChunk *r_tgt; // read target
 int main(int argc, char *argv[]) {
 int fd;
 char *next_line;
-	
+
 	(void) argc; (void) argv;
-	
-	//setvbuf(stdout, NULL, _IONBF, 0);
-	
-	
+
+	setvbuf(stdout, NULL, _IONBF, 0);
+
 	if (0 > (fd = open("/etc/passwd", O_RDONLY))) {
 		// open failure
 		return 3;
 	}
 
-	int lc = 0;
 	while ((next_line = get_next_line(fd))) {
-		pdb("Next output line: |%s|\n", next_line);
-		if (lc++ > 10)
-			break;
+		printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!|%s|\n", next_line);
 	}
 	return 0;
-	
+
 	close(fd);
 	//read(1, (char *) NULL, 1024);
 	return 0;
