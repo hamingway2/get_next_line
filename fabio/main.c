@@ -3,10 +3,18 @@
  * (by avoiding rescans & memory copies via read()s into linked list items).
  * The default buffer size of 42 is rather meager, so the performance gains
  * are questionable, but this implementation should be more or less O(N)
- * regarless of buffer size
+ * regarless of buffer size.
+ *
  *
  * Terminates all lines in output with \0, although the assigment is unspecific
- * about it...and there might be nullchars in the file too...
+ * about it...
+ *
+ * WARNING!!! 	Avoid binary data for tests (see const declaration right before main()).
+ *				The function requirements are bugged. This function
+ * 				can't be correctly tested with any input that contains nullchars:
+ *				one wouldn't be able to distinguish the end of the last line, if not
+ *				terminated, from random out-of-bounds junk.
+
  *
  * Should be adaptable to Norminette restricitions by removing a few debug
  * statements and comments and condensing a few breaks and branch conditions that
@@ -33,6 +41,13 @@
  *       	the compiler would simply map that .data and .bss area at
  *			program start instead
  *
+ * NOTE2:	main() is enormous and it uses many external libraries,
+ *          globals and such (and so does the debugging infrastructure)
+ *			That's because it's just a test harness
+ *			The test simply calls get_next_line() in parallel against many
+ *			file descriptors, and then hashes the original files and the
+ *			resulting ones.
+ *
  */
 
 #include <unistd.h>
@@ -48,7 +63,7 @@
 #endif
 
 #define HOLDERS_HEADROOM 256
-#define DEBUG_MODE 1
+#define DEBUG_MODE 0
 
 typedef int fd_t; // we also use it for array sizes and such
 
@@ -124,32 +139,54 @@ typedef struct GNLTracker {
 } GNLTracker;
 
 /*
- * Appends a linked list chunk to the holder.
- * re-arranges the tail accordingly.
- * Returns the new pointer or NULL in case of failure.
- * If the head is NULL, the added item is just created and returned
+ * Combined allocator and appender for chunks to the linked list.
+ * If c passed as NULL, allocates a new chunk for a holder.
+ * If c is a pointer to an already allocated chunk,
+ * appends it to h and re-arranges tail, head and next accordingly.
+ * If the chunk passed in A is smaller than a full buffer size, it is linked to
+ * itself to indicate the end of the holder.
+ * If the chunk has no lenght, the linked list not altered at all and the
+ * !!!CHUNK IS FREED!!! and NULL is returned.
+ *
+ * If both are passed as NULL, both operations are performed (tail is not wrapped,
+ * (however this is rarely useful).
+ * In any case, it returns a pointer to c or NULL in case of NULL chunks
+ * The function has no effect if both are passed as non-null
  */
-GNLChunk *gnlalloc(GNLHolder *h) {
-GNLChunk *ret;
+GNLChunk *gnl_add_or_free(GNLChunk *c, GNLHolder *h) {
 
-	if (! (ret = (GNLChunk *) malloc(sizeof(GNLChunk)))) {
-		p_debug("malloc() failed for chunk\n");
-		return NULL;
+	if (!c) {
+		if (! (c = (GNLChunk *) malloc(sizeof(GNLChunk)))) {
+			p_debug("malloc() failed for chunk\n");
+			return NULL;
+		}
+		c->len = 0;
+		c->next = NULL;
+		p_debug("ALLOCATED NEW CHUNK: %p\n", c);
 	}
-	ret->len = 0;
-	ret->next = NULL;
 	if (h) {
-		if (!h->head) {// initialise
-			p_debug("NEW HEAD: %p\n", (void *) ret);
-			h->tail = (h->head = ret);
+		if (c->len < BUFFER_SIZE) {
+			if (!c->len) {
+				p_debug("REFUSING TO APPEND EMPTY CHUNK (FREEING): %p\n", (void *) c);
+				free(c);
+				return NULL;
+			}
+			p_debug("SELF LINKING TRUNCATED CHUNK: %p\n", c);
+			c->next = c;
+		}
+		if (!h->head) {
+			p_debug("CHUNK ASSIGNED AS HEAD: %p\n", (void *) c);
+			h->tail = (h->head = c);
 			h->pos = h->head->buf; // initialise read position
 		} else { // append
-			p_debug("APPENDED CHUNK: %p\n", (void *) ret);
-			h->tail->next = ret;
-			h->tail = ret;
+			p_debug("CHUNK APPENDED TO %p: %p\n", (void *) c);
+			h->tail->next = c;
+			h->tail = c;
 		}
+		h->len += c->len;
+		p_debug("HOLDER RESIZED: %lu -> %lu\n", h->len - c->len, h->len);
 	}
-	return ret; // initialise
+	return c; // initialise
 }
 
 /*
@@ -265,13 +302,11 @@ GNLChunk *o;
 			p_debug("NO DEST OR CHUNK END REACHED FOR (%p)\n", (void *) h);
 			o = h->head;
 			if (o->next == h->head) {
-				p_debug("FOUND SELF LINKED CHUNK: %p. DISCARDING\n", (void *) h->head);
+				p_debug("HEAD IS LINKS TO ITSELF. DISCARDING: %p\n", (void *) h->head);
 				// reset state
-				h->nl = (h->pos = NULL);
-				h->head = NULL;
+				h->head = (GNLChunk *)(h->nl = (h->pos = NULL));
 			} else {
-				h->head = o->next;
-				h->pos = h->head->buf;
+				h->pos = (h->head = o->next)->buf;
 				p_debug("HEAD SHIFTED %p->%p\n",
 					(void *) o, (void *) h->head
 				);
@@ -303,8 +338,8 @@ GNLChunk *o;
 			p_debug("THERE IS NO REMAINING HEAD\n");
 		}
 	}
-	p_debug("RETURNING: %lu(L: %p, NL: %lu)\n",
-		ret, (void *) h->head, h->nl ? h->nl - h->head->buf : -1
+	p_debug("RETURNING: %lu(L: %p, NL: %p)\n",
+		ret, (void *) h->head, h->nl
 	);
 	return ret;
 }
@@ -321,10 +356,12 @@ ssize_t n;
 		p_debug("malloc failed for output string(%lu bytes)\n", h->len * sizeof(char));
 		return NULL;
 	}
-	p_debug("Holder's length before packing: %lu\n", h->len);
+	p_debug("HOLDER'S LENGTH BEFORE PACKING: %lu\n", h->len);
 	n = pack_and_free(ret, h);
 	ret[n] = '\0';
-	p_debug("Packed %lu bytes. %lu unscanned bytes remaining in the holder\n",n, h->len);
+	p_debug("PACKED %lu BYTES. %lu TOTAL REMAINING BYTES\n",
+		n, h->pos ? h->len - (h->pos - h->head->buf) : 0
+	);
 	if (n < 0)
 		return NULL;
 	return ret;
@@ -342,26 +379,13 @@ GNLChunk *r_tgt; // read target
 
 	while (! lh->nl) { // we get more data only if we have no NL yet
 
-		r_tgt = gnlalloc(lh);
+		r_tgt = gnl_add_or_free(NULL, NULL);
 		if (! r_tgt)
 			return NULL; // state is corrupt anyway
 		r_tgt->len = read(fd, r_tgt->buf, BUFFER_SIZE); // short read (we don't care about errors)
 		p_debug("READ BUFFER: (%lu bytes)\n", r_tgt->len);
-		if (r_tgt->len < BUFFER_SIZE) {
-			if (r_tgt->len == 0) { // bypass creating the [last] empty member
-				p_debug("NULL READ/READ ERROR(%lu). FREEING CHUNK\n", r_tgt->len);
-				if (lh->tail) // link EOF member to itself. Might be this very one
-					lh->tail->next = lh->tail;
-				free(r_tgt);
-				break;
-			}
-			r_tgt->next = r_tgt; // EOF member
-		}
-		lh->len += r_tgt->len;
-		p_debug("LENGTH OF NEW CHUNK: %lu. NEW LENGTH OF HOLDER: %lu. TAIL LINK: %p->%p\n",
-			lh->tail->len, lh->len, lh->tail, lh->tail->next
-		);
-
+		if (! gnl_add_or_free(r_tgt, lh))
+			break;
 		lh->nl = gnl_strchr(r_tgt->buf, r_tgt->len);
 		if (lh->nl) {
 			p_debug("FOUND NEWLINE AT GLOBAL OFFSET: %lu\n",
@@ -378,12 +402,13 @@ GNLChunk *r_tgt; // read target
 
 // only for the test
 const char *__test_files[] = {
-    /*"/dev/null",
+    "/dev/null",
     "/etc/passwd",
-    "/etc/hostname",*/
-    "/dev/shm/bash_chunk"
+    "/etc/hostname",
+	"/etc/debconf.conf"
 };
 # define OUTPUT_FILE_TEMPLATE "/dev/shm/gnl_tmp_%d_%d" // PID, fd number
+# define HASH_COMMAND_TEMPLATE "md5sum %s " OUTPUT_FILE_TEMPLATE
 
 int main(int argc, char *argv[]) {
 int fd_idx;
@@ -399,7 +424,7 @@ int fd;
 
 	setvbuf(stdout, NULL, _IONBF, 0);
 	setvbuf(stderr, NULL, _IONBF, 0);
-	umask(0077);
+	umask(077);
 
 
 	// this for loop is only for the test. Opens all the files first
@@ -416,7 +441,7 @@ int fd;
 			return 3;
 		}
 		dprintf(2, "Opening `%s` for writing...\n", fn_buf);
-		if (0 > (fds_w[fd_idx] = open(fn_buf, O_WRONLY | O_CREAT | O_TRUNC))) {
+		if (0 > (fds_w[fd_idx] = open(fn_buf, O_WRONLY | O_CREAT | O_TRUNC, 0666))) {
 			perror("..failed: ");
 			break;
 		}
@@ -425,14 +450,15 @@ int fd;
 
 	fds_left = sizeof(fds_r) / sizeof(fds_r[0]);
 	dprintf(2, "Transferring lines...\n");
+	dprintf(2, "WARNING!!! The requirements are bugged and this won't work with files that contain nullchars...\n");
 	while (1) {
 		for (fd_idx = 0; (long unsigned int)fd_idx < sizeof(fds_r) / sizeof(fds_r[0]); fd_idx++) {
 			if (fds_w[fd_idx] < 0)
 				continue;
 			if ((next_line = get_next_line(fds_r[fd_idx]))) {
-				dprintf(2, "Transferring %lu bytes from `%s` (%d file descriptors left)\n",
+				/*dprintf(2, "Transferring %lu bytes from `%s` (%d file descriptors left)\n",
 					strlen(next_line), __test_files[fd_idx], fds_left
-				);
+				);*/
 				write(fds_w[fd_idx], next_line, strlen(next_line));
 				free(next_line);
 				continue;
@@ -457,6 +483,32 @@ int fd;
 
 	}
 
+	dprintf(2, "Comparing hashes...\n");
+	for (fd_idx = 0; (long unsigned int)fd_idx < sizeof(fds_r) / sizeof(fds_r[0]); fd_idx++) {
+		dprintf(2, "..%s\n", fn_buf);
+		if (0 > snprintf(fn_buf, sizeof(fn_buf),
+				HASH_COMMAND_TEMPLATE, __test_files[fd_idx], getpid(), fds_r[fd_idx]
+		)) {
+			write(2, "sprintf() failure\n", 18);
+			return 3;
+		}
+		system(fn_buf);
+	}
+
+
+
+	// cleanup regardless. Files might not exist
+	for (fd_idx = 0; (long unsigned int)fd_idx < sizeof(fds_r) / sizeof(fds_r[0]); fd_idx++) {
+		if (0 > snprintf(fn_buf, sizeof(fn_buf), OUTPUT_FILE_TEMPLATE, getpid(), fds_r[fd_idx])) {
+			write(2, "sprintf() failure\n", 18);
+			return 3;
+		}
+		dprintf(2, "Deleting `%s`...\n", fn_buf);
+		if (0 > unlink(fn_buf)) {
+			perror("..failed: ");
+		}
+	}
+
 	//~ (void) fds_r; (void) fds_w; (void) fn_buf; (void) fds_left;
 
 	//~ if (0 > (fd = open("/etc/passwd", O_RDONLY))) {
@@ -471,17 +523,6 @@ int fd;
 	//~ close(fd);
 
 
-	// cleanup regardless. Files might not exist
-	for (fd_idx = 0; (long unsigned int)fd_idx < sizeof(fds_r) / sizeof(fds_r[0]); fd_idx++) {
-		if (0 > snprintf(fn_buf, sizeof(fn_buf), OUTPUT_FILE_TEMPLATE, getpid(), fds_r[fd_idx])) {
-			write(2, "sprintf() failure\n", 18);
-			return 3;
-		}
-		dprintf(2, "Deleting `%s`...\n", fn_buf);
-		if (0 > unlink(fn_buf)) {
-			perror("..failed: ");
-		}
-	}
 
 	//read(1, (char *) NULL, 1024);
 	return 0;
