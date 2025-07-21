@@ -9,11 +9,11 @@
  * Terminates all lines in output with \0, although the assigment is unspecific
  * about it...
  *
- * WARNING!!! 	Avoid binary data for tests (see const declaration right before main()).
- *				The function requirements are bugged. This function
- * 				can't be correctly tested with any input that contains nullchars:
- *				one wouldn't be able to distinguish the end of the last line, if not
- *				terminated, from random out-of-bounds junk.
+ * WARNING!!!     Avoid binary data for tests (see const declaration right before main()).
+ *                The function requirements are bugged. This function
+ *                 can't be correctly tested with any input that contains nullchars:
+ *                one wouldn't be able to distinguish the end of the last line, if not
+ *                terminated, from random out-of-bounds junk.
 
  *
  * Should be adaptable to Norminette restricitions by removing a few debug
@@ -23,31 +23,43 @@
  * The norminette is really built around 80x25 terminals, nowadays that forces
  * people to write worse code in many cases ...
  *
- * BUGS:	File descriptors numbers can be dup2()ed into the billions even when the
- *			process has only a handful of them open.
- *			At the moment, the file descriptor table is dynamically allocate and
+ * BUGS:    File descriptors numbers can be dup2()ed into the billions even when the
+ *          process has only a handful of them open.
+ *          At the moment, the file descriptor table is dynamically allocate and
  *          linearly addressed.
- *			Such a high file descriptor number would, at best, cause a
- *			massive slowdown and allocate gigabytes of memory, at worst seize your
- *			computer (unless running in a memory-limited control group) and be met by
- *			the OOM killer anyway anyway.
- *			An indirect lookup table with binary search/content addressable memory
- *			could handle that problem, however the current limits imposed by the
- *			Norminette + limit to number of support functions in this assignment
- *			would make that particularly difficult.
+ *          Such a high file descriptor number would, at best, cause a
+ *          massive slowdown and allocate gigabytes of memory, at worst seize your
+ *          computer (unless running in a memory-limited control group) and be met by
+ *          the OOM killer anyway anyway.
+ *          An indirect lookup table with binary search/content addressable memory
+ *          could handle that problem, however the current limits imposed by the
+ *          Norminette + limit to number of support functions in this assignment
+ *          would make that particularly difficult.
  *
- * NOTE:	the file descriptor holders table leaves behind dynamic allocations.
- *			Those are not leaks. If done with statics,
- *       	the compiler would simply map that .data and .bss area at
- *			program start instead
  *
- * NOTE2:	main() is enormous and it uses many external libraries,
+ * NOTE:    the file descriptor holders table leaves behind dynamic allocations.
+ *            Those are not leaks. If done with statics,
+ *           the compiler would simply map that .data and .bss area at
+ *            program start instead
+ *
+ * NOTE2:   main() is enormous and it uses many external libraries,
  *          globals and such (and so does the debugging infrastructure)
- *			That's because it's just a test harness
- *			The test simply calls get_next_line() in parallel against many
- *			file descriptors, and then hashes the original files and the
- *			resulting ones.
+ *          That's because it's just a test harness
+ *          The test simply calls get_next_line() in parallel against many
+ *          file descriptors, and then hashes the original files and the
+ *          resulting ones.
  *
+ * MISSING OPTIMISATIONS:
+ *          - Check if the compiler optimised the actual memory copy with
+ *            bigger words, otherwise do it ourselves (walk the memory
+ *            with strides of however many bites fit into a register, as
+ *            opposed to byte-by-byte)
+ *          - The file descriptor table problem above, which is borderline a bug
+ *          - There are a couple of loops that could have been avoided with
+ *            double pointers, but the benefits might be questionable
+ *
+ * 		Not really feasible under norminette restrictions without resorting
+ * 		even less orthodox syntax.
  */
 
 #include <unistd.h>
