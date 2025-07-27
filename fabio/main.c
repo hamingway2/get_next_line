@@ -4,6 +4,9 @@
  * The default buffer size of 42 is rather meager, so the performance gains
  * are questionable, but this implementation should be more or less O(N)
  * regarless of buffer size.
+ * TODO: 	after further inspection, it turns out there _is_ a duplicate scan:
+ *			gnl_strchr() is called in pack_and_free().
+ *			That can likely be eliminated too with some refactor
  *
  *
  * Terminates all lines in output with \0, although the assigment is unspecific
