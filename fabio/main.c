@@ -305,8 +305,6 @@ GNLChunk *o;
 					p_debug("REACHED LF POINTER AT CHUNK OFFSET %lu\n", h->nl - h->head->buf);
 					// We don't exit the main loop yet. If we ALSO are at the end of the chunk,
 					// the following cleanup/swap has to run.
-					// We temporarily turn NL into a pointer to itself to indicate that
-					// we found the NL and the main loop must exit
 					break;
 				}
 			}
@@ -338,7 +336,7 @@ GNLChunk *o;
 			if (h->pos < h->head->buf + h->head->len) {
 				h->nl = gnl_strchr(h->pos, (h->head->buf + h->head->len) - h->pos); // more separators?
 				if (h->nl) {
-					p_debug("FOUNT FOLLOWING NL AT CHUNK %p, OFFSET %lu\n",
+					p_debug("FOUND FOLLOWING NL AT CHUNK %p, OFFSET %lu\n",
 						(void *) h->head, h->nl - h->head->buf
 					);
 				} else {
